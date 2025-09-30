@@ -42,7 +42,7 @@ def restart_container(name: str) -> str:
     return f"🔄 Контейнер {name} перезапущен"
 
 
-def get_logs(name: str, tail: int = 20) -> str:
+def get_logs(name: str, tail: int = 35) -> str:
     container = docker_client.containers.get(name)
     logs = container.logs(tail=tail).decode(errors="ignore")
     return f"📜 Логи {name}:\n```\n{logs}\n```"
@@ -92,20 +92,30 @@ async def container_action(callback: types.CallbackQuery):
     try:
         if action == "start":
             result = start_container(name)
+            parse_mode = None
         elif action == "stop":
             result = stop_container(name)
+            parse_mode = None
         elif action == "restart":
             result = restart_container(name)
+            parse_mode = None
         elif action == "logs":
-            logs = get_logs(name)
-            return await callback.message.answer(logs, parse_mode="Markdown")
+            result = get_logs(name)
+            parse_mode = "Markdown"
         else:
             result = "❌ Неизвестное действие"
+            parse_mode = None
     except Exception as e:
         result = f"⚠️ Ошибка: {e}"
+        parse_mode = None
 
-    await callback.message.answer(result)
+    # Отправляем результат действия
+    await callback.message.answer(result, parse_mode=parse_mode)
     await callback.answer()
+
+    # После любого действия показываем список контейнеров
+    await show_containers(callback.message)
+
 
 
 async def main():
