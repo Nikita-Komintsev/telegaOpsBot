@@ -1,6 +1,6 @@
 import os
-import subprocess
 import asyncio
+import docker
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -14,19 +14,38 @@ ALLOWED_USER_ID = int(os.getenv("ALLOWED_USER_ID"))
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-
-def run_cmd(cmd):
-    return subprocess.getoutput(cmd)
+# Docker клиент
+docker_client = docker.from_env()
 
 
 def get_containers():
-    result = run_cmd("docker ps -a --format '{{.Names}} - {{.Status}}'")
-    containers = []
-    for line in result.splitlines():
-        if line.strip():
-            name, status = line.split(" - ", 1)
-            containers.append((name, status))
-    return containers
+    """Список всех контейнеров (имя, статус)."""
+    containers = docker_client.containers.list(all=True)
+    return [(c.name, c.status) for c in containers]
+
+
+def stop_container(name: str) -> str:
+    container = docker_client.containers.get(name)
+    container.stop()
+    return f"🛑 Контейнер {name} остановлен"
+
+
+def start_container(name: str) -> str:
+    container = docker_client.containers.get(name)
+    container.start()
+    return f"▶️ Контейнер {name} запущен"
+
+
+def restart_container(name: str) -> str:
+    container = docker_client.containers.get(name)
+    container.restart()
+    return f"🔄 Контейнер {name} перезапущен"
+
+
+def get_logs(name: str, tail: int = 20) -> str:
+    container = docker_client.containers.get(name)
+    logs = container.logs(tail=tail).decode(errors="ignore")
+    return f"📜 Логи {name}:\n```\n{logs}\n```"
 
 
 @dp.message(Command("start"))
@@ -39,62 +58,54 @@ async def cmd_start(message: types.Message):
 async def show_containers(message: types.Message):
     containers = get_containers()
     if not containers:
-        return await message.answer("❌ Контейнеров не найдено")
+        return await message.answer("❌ Нет контейнеров")
 
     kb = InlineKeyboardBuilder()
     for name, status in containers:
-        kb.button(text=f"{name} ({status})", callback_data=f"container:{name}")
+        kb.button(text=f"{name} ({status})", callback_data=f"select:{name}")
     kb.adjust(1)
-
     await message.answer("📦 Выбери контейнер:", reply_markup=kb.as_markup())
 
 
-@dp.callback_query(lambda c: c.data.startswith("container:"))
-async def container_menu(callback: types.CallbackQuery):
-    container = callback.data.split(":", 1)[1]
+@dp.callback_query(lambda c: c.data.startswith("select:"))
+async def container_selected(callback: types.CallbackQuery):
+    name = callback.data.split(":", 1)[1]
 
     kb = InlineKeyboardBuilder()
-    kb.button(text="▶️ Запустить", callback_data=f"action:start:{container}")
-    kb.button(text="🛑 Остановить", callback_data=f"action:stop:{container}")
-    kb.button(text="🔄 Перезапустить", callback_data=f"action:restart:{container}")
-    kb.button(text="📜 Логи", callback_data=f"action:logs:{container}")
-    kb.button(text="🔙 Назад", callback_data="back")
-    kb.adjust(2, 2, 1)
+    kb.button(text="▶️ Запустить", callback_data=f"action:start:{name}")
+    kb.button(text="🛑 Остановить", callback_data=f"action:stop:{name}")
+    kb.button(text="🔄 Перезапустить", callback_data=f"action:restart:{name}")
+    kb.button(text="📜 Логи", callback_data=f"action:logs:{name}")
+    kb.adjust(2)
 
-    await callback.message.edit_text(
-        f"⚙️ Контейнер: `{container}`\nВыбери действие:",
-        parse_mode="Markdown",
+    await callback.message.answer(
+        f"Что сделать с контейнером <b>{name}</b>?",
         reply_markup=kb.as_markup(),
+        parse_mode="HTML"
     )
-
-
-@dp.callback_query(lambda c: c.data == "back")
-async def back_to_list(callback: types.CallbackQuery):
-    await show_containers(callback.message)
+    await callback.answer()
 
 
 @dp.callback_query(lambda c: c.data.startswith("action:"))
 async def container_action(callback: types.CallbackQuery):
-    _, action, container = callback.data.split(":", 2)
+    _, action, name = callback.data.split(":", 2)
+    try:
+        if action == "start":
+            result = start_container(name)
+        elif action == "stop":
+            result = stop_container(name)
+        elif action == "restart":
+            result = restart_container(name)
+        elif action == "logs":
+            logs = get_logs(name)
+            return await callback.message.answer(logs, parse_mode="Markdown")
+        else:
+            result = "❌ Неизвестное действие"
+    except Exception as e:
+        result = f"⚠️ Ошибка: {e}"
 
-    if action == "start":
-        result = run_cmd(f"docker start {container}")
-        text = f"▶️ Запущен: `{result}`"
-    elif action == "stop":
-        result = run_cmd(f"docker stop {container}")
-        text = f"🛑 Остановлен: `{result}`"
-    elif action == "restart":
-        result = run_cmd(f"docker restart {container}")
-        text = f"🔄 Перезапущен: `{result}`"
-    elif action == "logs":
-        result = run_cmd(f"docker logs --tail 20 {container}")
-        text = f"📜 Логи контейнера `{container}`:\n```\n{result}\n```"
-    else:
-        text = "❌ Неизвестное действие"
-
-    await callback.message.edit_text(
-        text, parse_mode="Markdown", reply_markup=None
-    )
+    await callback.message.answer(result)
+    await callback.answer()
 
 
 async def main():
