@@ -106,7 +106,10 @@ async def show_containers(message: types.Message):
     kb.button(text="🔄 Обновить", callback_data="refresh")
     kb.adjust(1)
 
-    await message.answer("📦 Выбери контейнер:", reply_markup=kb.as_markup())
+    try:
+        await message.edit_text("📦 Выбери контейнер:", reply_markup=kb.as_markup())
+    except Exception:
+        await message.answer("📦 Выбери контейнер:", reply_markup=kb.as_markup())
 
 
 @dp.callback_query(lambda c: c.data == "refresh")
@@ -129,11 +132,18 @@ async def container_selected(callback: types.CallbackQuery):
     kb.button(text="⬅️ Назад", callback_data="refresh")
     kb.adjust(2)
 
-    await callback.message.answer(
-        f"Что сделать с контейнером <b>{name}</b>?",
-        reply_markup=kb.as_markup(),
-        parse_mode="HTML"
-    )
+    try:
+        await callback.message.edit_text(
+            f"Что сделать с контейнером <b>{name}</b>?",
+            reply_markup=kb.as_markup(),
+            parse_mode="HTML"
+        )
+    except Exception:
+        await callback.message.answer(
+            f"Что сделать с контейнером <b>{name}</b>?",
+            reply_markup=kb.as_markup(),
+            parse_mode="HTML"
+        )
     await callback.answer()
 
 
@@ -156,14 +166,15 @@ async def container_action(callback: types.CallbackQuery):
             for part in log_parts:
                 await callback.message.answer(f"```\n{part}\n```", parse_mode="Markdown")
 
-            # Добавляем кнопку "Показать ещё"
+            # Кнопки для логов (новое сообщение)
             kb = InlineKeyboardBuilder()
             kb.button(text="📜 Показать ещё", callback_data=f"logs_more:{name}:100")
             kb.button(text="⬅️ Назад", callback_data="refresh")
             kb.adjust(1)
             await callback.message.answer("Что дальше?", reply_markup=kb.as_markup())
-            result = None
-            parse_mode = None
+
+            await callback.answer()
+            return  # не показываем контейнеры после логов
         else:
             result = "❌ Неизвестное действие"
             parse_mode = None
@@ -171,17 +182,19 @@ async def container_action(callback: types.CallbackQuery):
         result = f"⚠️ Ошибка: {e}"
         parse_mode = None
 
-    if result:
+    # редактируем текущее сообщение, а не отправляем новое
+    try:
+        await callback.message.edit_text(result, parse_mode=parse_mode)
+    except Exception:
         await callback.message.answer(result, parse_mode=parse_mode)
 
     await callback.answer()
-    if action != "logs":
-        await show_containers(callback.message)
+    await show_containers(callback.message)
 
 
 @dp.callback_query(lambda c: c.data.startswith("logs_more:"))
 async def logs_more(callback: types.CallbackQuery):
-    """Догрузка дополнительных строк логов."""
+    """Догрузка дополнительных строк логов (новые сообщения)."""
     _, name, offset_str = callback.data.split(":")
     offset = int(offset_str)
 
