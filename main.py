@@ -63,8 +63,17 @@ async def show_containers(message: types.Message):
     kb = InlineKeyboardBuilder()
     for name, status in containers:
         kb.button(text=f"{name} ({status})", callback_data=f"select:{name}")
+    kb.button(text="🔄 Обновить", callback_data="refresh")
     kb.adjust(1)
     await message.answer("📦 Выбери контейнер:", reply_markup=kb.as_markup())
+
+
+@dp.callback_query(lambda c: c.data == "refresh")
+async def refresh_list(callback: types.CallbackQuery):
+    """Обновить список контейнеров."""
+    await callback.answer("🔄 Обновляю...")
+    # Просто перерисовываем список контейнеров
+    await show_containers(callback.message)
 
 
 @dp.callback_query(lambda c: c.data.startswith("select:"))
@@ -76,6 +85,7 @@ async def container_selected(callback: types.CallbackQuery):
     kb.button(text="🛑 Остановить", callback_data=f"action:stop:{name}")
     kb.button(text="🔄 Перезапустить", callback_data=f"action:restart:{name}")
     kb.button(text="📜 Логи", callback_data=f"action:logs:{name}")
+    kb.button(text="⬅️ Назад", callback_data="refresh")
     kb.adjust(2)
 
     await callback.message.answer(
@@ -113,9 +123,8 @@ async def container_action(callback: types.CallbackQuery):
     await callback.message.answer(result, parse_mode=parse_mode)
     await callback.answer()
 
-    # После любого действия показываем список контейнеров
+    # После любого действия обновляем список контейнеров
     await show_containers(callback.message)
-
 
 
 async def main():
